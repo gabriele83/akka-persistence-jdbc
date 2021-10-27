@@ -81,9 +81,10 @@ case class SnapshotMigrator(profile: JdbcProfile)(implicit system: ActorSystem) 
   /**
    * migrate all the legacy snapshot schema data into the new snapshot schema
    */
-  def migrateAll(): Future[Done] = Source
+  def migrate(filter: SnapshotRow => Boolean = _ => true): Future[Done] = Source
     .fromPublisher(snapshotDB.stream(queries.SnapshotTable.result))
-    .mapAsync(NoParallelism) { record =>
+    .filter(filter)
+    .mapAsync(NoParallelism) { record: SnapshotRow =>
       val (metadata, value) = toSnapshotData(record)
       log.debug(s"migrating snapshot for ${metadata.toString}")
       defaultSnapshotDao.save(metadata, value)

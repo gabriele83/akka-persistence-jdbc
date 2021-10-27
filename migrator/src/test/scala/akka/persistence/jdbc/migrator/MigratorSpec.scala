@@ -30,7 +30,7 @@ abstract class MigratorSpec(val config: Config) extends SimpleSpec with BeforeAn
   // The db is initialized in the before and after each bocks
   var dbOpt: Option[Database] = None
 
-  implicit val pc: PatienceConfig = PatienceConfig(timeout = 10.seconds)
+  implicit val pc: PatienceConfig = PatienceConfig(timeout = 30.seconds)
   implicit val timeout: Timeout = Timeout(1.minute)
 
   private val logger: Logger = LoggerFactory.getLogger(this.getClass)

@@ -2,7 +2,11 @@ package akka.persistence.jdbc.migrator
 
 import akka.Done
 import akka.pattern.ask
+import akka.persistence.PersistentRepr
+import akka.persistence.jdbc.config.ReadJournalConfig
 import akka.persistence.jdbc.db.SlickDatabase
+import akka.persistence.jdbc.journal.dao.legacy
+import akka.persistence.jdbc.migrator.JournalMigrator.ReadJournalConfig
 import akka.persistence.jdbc.migrator.MigratorSpec._
 
 abstract class JournalMigratorTest(configName: String) extends MigratorSpec(configName) {
@@ -117,6 +121,42 @@ abstract class JournalMigratorTest(configName: String) extends MigratorSpec(conf
           val oddEvents: Seq[AccountEvent] = eventsByTag(MigratorSpec.Odd).futureValue
           oddEvents.size shouldBe 1500
           oddEvents.forall(e => e.amount % 2 == 1) shouldBe true
+        }
+      }
+    } // new persistence
+  }
+
+  it should "migrate the event journal using a filter on tags" in {
+    withLegacyActorSystem { implicit systemLegacy =>
+      withReadJournal { implicit readJournal =>
+        withTestActors() { (actorA1, actorA2, actorA3) =>
+          (actorA1 ? CreateAccount(0)).futureValue
+          (actorA2 ? CreateAccount(0)).futureValue
+          (actorA3 ? CreateAccount(0)).futureValue
+          for (i <- 1 to 99) {
+            (actorA1 ? Deposit(i)).futureValue
+            (actorA2 ? Deposit(i)).futureValue
+            (actorA3 ? Deposit(i)).futureValue
+          }
+          eventually {
+            countJournal().futureValue shouldBe 300
+          }
+        }
+      }
+    } // legacy persistence
+    withActorSystem { implicit systemNew =>
+      withReadJournal { implicit readJournal =>
+        eventually {
+          countJournal().futureValue shouldBe 0 // before migration
+          val filter: legacy.JournalRow => Boolean =
+            row => row.tags.map(tag => tag == MigratorSpec.Even).getOrElse(false)
+          JournalMigrator(SlickDatabase.profile(config, "slick")).migrate(filter).futureValue shouldBe Done
+          countJournal().futureValue shouldBe 150 // after migration
+          val evenEvents: Seq[AccountEvent] = eventsByTag(MigratorSpec.Even).futureValue
+          evenEvents.size shouldBe 150
+          evenEvents.forall(e => e.amount % 2 == 0) shouldBe true
+          val oddEvents: Seq[AccountEvent] = eventsByTag(MigratorSpec.Odd).futureValue
+          oddEvents.size shouldBe 0
         }
       }
     } // new persistence

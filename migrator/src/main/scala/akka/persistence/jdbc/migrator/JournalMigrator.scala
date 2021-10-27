@@ -11,7 +11,7 @@ import akka.persistence.PersistentRepr
 import akka.persistence.jdbc.AkkaSerialization
 import akka.persistence.jdbc.config.{ JournalConfig, ReadJournalConfig }
 import akka.persistence.jdbc.db.SlickExtension
-import akka.persistence.jdbc.journal.dao.JournalQueries
+import akka.persistence.jdbc.journal.dao.{ legacy, JournalQueries }
 import akka.persistence.jdbc.journal.dao.legacy.ByteArrayJournalSerializer
 import akka.persistence.jdbc.journal.dao.JournalTables.{ JournalAkkaSerializationRow, TagRow }
 import akka.persistence.jdbc.migrator.JournalMigrator.{ JournalConfig, ReadJournalConfig }
@@ -69,17 +69,17 @@ final case class JournalMigrator(profile: JdbcProfile)(implicit system: ActorSys
   /**
    * write all legacy events into the new journal tables applying the proper serialization
    */
-  def migrate(): Future[Done] = Source
+  def migrate(filter: legacy.JournalRow => Boolean = _ => true): Future[Done] = Source
     .fromPublisher(journalDB.stream(query))
+    .filter(filter)
     .via(serializer.deserializeFlow)
     .map {
-      case Success((repr, tags, ordering)) => (repr, tags, ordering)
+      case Success((repr, tags, ordering)) => serialize(repr, tags, ordering)
       case Failure(exception)              => throw exception // blow-up on failure
     }
-    .map { case (repr, tags, ordering) => serialize(repr, tags, ordering) }
     // get pages of many records at once
     .grouped(bufferSize)
-    .mapAsync(1)(records => {
+    .mapAsync(1) { records =>
       val stmt: DBIO[Unit] = records
         // get all the sql statements for this record as an option
         .map { case (newRepr, newTags) =>
@@ -92,7 +92,7 @@ final case class JournalMigrator(profile: JdbcProfile)(implicit system: ActorSys
         })
 
       journalDB.run(stmt)
-    })
+    }
     .run()
 
   /**
